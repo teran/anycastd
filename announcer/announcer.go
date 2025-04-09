@@ -4,6 +4,7 @@ import (
 	"context"
 	"strconv"
 	"strings"
+	"sync"
 
 	api "github.com/osrg/gobgp/v3/api"
 	apb "google.golang.org/protobuf/types/known/anypb"
@@ -19,6 +20,11 @@ type Announcer interface {
 	Denounce(ctx context.Context) error
 }
 
+type path struct {
+	isAnnounced bool
+	gobgpPath   *api.Path
+}
+
 type Config struct {
 	GoBGP    GoBGPServer
 	Prefixes []string
@@ -27,6 +33,7 @@ type Config struct {
 }
 
 type announcer struct {
+	mutex    *sync.Mutex
 	gobgp    GoBGPServer
 	prefixes []string
 	nextHop  string
@@ -35,6 +42,7 @@ type announcer struct {
 
 func New(cfg Config) Announcer {
 	return &announcer{
+		mutex:    &sync.Mutex{},
 		gobgp:    cfg.GoBGP,
 		prefixes: cfg.Prefixes,
 		nextHop:  cfg.NextHop,
@@ -43,17 +51,23 @@ func New(cfg Config) Announcer {
 }
 
 func (a *announcer) Announce(ctx context.Context) error {
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+
 	pp, err := a.newPathList()
 	if err != nil {
 		return err
 	}
 
 	for _, p := range pp {
-		_, err = a.gobgp.AddPath(ctx, &api.AddPathRequest{
-			Path: p,
-		})
-		if err != nil {
-			return err
+		if !p.isAnnounced {
+			_, err = a.gobgp.AddPath(ctx, &api.AddPathRequest{
+				Path: p.gobgpPath,
+			})
+			if err != nil {
+				return err
+			}
+			p.isAnnounced = true
 		}
 	}
 
@@ -61,24 +75,30 @@ func (a *announcer) Announce(ctx context.Context) error {
 }
 
 func (a *announcer) Denounce(ctx context.Context) error {
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+
 	pp, err := a.newPathList()
 	if err != nil {
 		return err
 	}
 
 	for _, p := range pp {
-		err := a.gobgp.DeletePath(ctx, &api.DeletePathRequest{
-			Path: p,
-		})
-		if err != nil {
-			return err
+		if p.isAnnounced {
+			err := a.gobgp.DeletePath(ctx, &api.DeletePathRequest{
+				Path: p.gobgpPath,
+			})
+			if err != nil {
+				return err
+			}
+			p.isAnnounced = false
 		}
 	}
 	return nil
 }
 
-func (a *announcer) newPathList() ([]*api.Path, error) {
-	prefixes := []*api.Path{}
+func (a *announcer) newPathList() ([]path, error) {
+	prefixes := []path{}
 	for _, p := range a.prefixes {
 		l := strings.SplitN(p, "/", 2)
 		prefixLen, err := strconv.ParseUint(l[1], 10, 32)
@@ -110,10 +130,12 @@ func (a *announcer) newPathList() ([]*api.Path, error) {
 
 		attrs := []*apb.Any{a1, a2}
 
-		prefixes = append(prefixes, &api.Path{
-			Family: &api.Family{Afi: api.Family_AFI_IP, Safi: api.Family_SAFI_UNICAST},
-			Nlri:   nlri,
-			Pattrs: attrs,
+		prefixes = append(prefixes, path{
+			gobgpPath: &api.Path{
+				Family: &api.Family{Afi: api.Family_AFI_IP, Safi: api.Family_SAFI_UNICAST},
+				Nlri:   nlri,
+				Pattrs: attrs,
+			},
 		})
 	}
 
