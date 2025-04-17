@@ -9,9 +9,13 @@ announcer:
     - name: some_router_1
       remote_address: 10.0.0.252
       remote_asn: 65000
+      hold_time: 30s
+      keepalive_interval: 10s
     - name: some_router_2
       remote_address: 10.0.0.253
       remote_asn: 65000
+      hold_time: 60s
+      keepalive_interval: 5s
 services:
   - name: http
     check_interval: 10s

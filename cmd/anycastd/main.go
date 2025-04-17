@@ -106,6 +106,12 @@ func main() {
 					NeighborAddress: peer.RemoteAddress,
 					PeerAsn:         peer.RemoteASN,
 				},
+				Timers: &apipb.Timers{
+					Config: &apipb.TimersConfig{
+						HoldTime:          uint64(peer.HoldTime.TimeDuration().Seconds()),
+						KeepaliveInterval: uint64(peer.KeepaliveInterval.TimeDuration().Seconds()),
+					},
+				},
 			},
 		})
 		if err != nil {

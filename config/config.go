@@ -56,9 +56,11 @@ func (c Check) Validate() error {
 }
 
 type Peer struct {
-	Name          string `json:"name"`
-	RemoteAddress string `json:"remote_address"`
-	RemoteASN     uint32 `json:"remote_asn"`
+	Name              string      `json:"name"`
+	RemoteAddress     string      `json:"remote_address"`
+	RemoteASN         uint32      `json:"remote_asn"`
+	HoldTime          th.Duration `json:"hold_time"`
+	KeepaliveInterval th.Duration `json:"keepalive_interval"`
 }
 
 func (p Peer) Validate() error {
