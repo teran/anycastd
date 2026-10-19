@@ -105,7 +105,11 @@ router bgp %d
 	probeC, err := docker.NewContainer(
 		probeName,
 		probeImage,
-		[]string{"sh", "-c", "mkdir -p /www && echo ok > /www/index.html && exec httpd -f -p 8080 -h /www"},
+		// alpine:3.20's busybox does not ship the `httpd` applet (it lives in
+		// the busybox-extras package), so install it before starting the server.
+		// The container also keeps its bridge default route, so apk can reach
+		// the network even though the group network is internal.
+		[]string{"sh", "-c", "apk add --no-cache busybox-extras >/dev/null 2>&1; mkdir -p /www && echo ok > /www/index.html && exec httpd -f -p 8080 -h /www"},
 		docker.NewEnvironment(),
 		docker.NewPortBindings(),
 	)
