@@ -48,9 +48,10 @@ func (a *adapter) AddPath(ctx context.Context, prefix, nextHop string) error {
 
 func (a *adapter) DeletePath(ctx context.Context, prefix string) error {
 	// ctx is unused: the v4 DeletePath API has no context parameter.
-	// For deletion we only need the NLRI part. Pass an empty nextHop since
-	// the attribute is ignored during withdrawal.
-	p, err := newPath(prefix, "")
+	// A withdrawal path carries only the NLRI — it must be flagged
+	// Withdrawal so apiutil2Path skips the next-hop lookup (an empty nextHop
+	// would otherwise make it fail with "nexthop not found").
+	p, err := newWithdrawalPath(prefix)
 	if err != nil {
 		return err
 	}
@@ -58,6 +59,19 @@ func (a *adapter) DeletePath(ctx context.Context, prefix string) error {
 	return a.srv.DeletePath(apiutil.DeletePathRequest{
 		Paths: []*apiutil.Path{p},
 	})
+}
+
+// newWithdrawalPath builds a GoBGP v4 *apiutil.Path that withdraws the given
+// prefix. It reuses newPath with an empty next-hop (withdrawal paths carry no
+// nexthop attribute) and marks the path as a withdrawal.
+func newWithdrawalPath(prefix string) (*apiutil.Path, error) {
+	p, err := newPath(prefix, "")
+	if err != nil {
+		return nil, err
+	}
+
+	p.Withdrawal = true
+	return p, nil
 }
 
 // newPath builds a GoBGP v4 *apiutil.Path for the given prefix and nextHop.
