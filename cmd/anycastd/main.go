@@ -2,20 +2,23 @@ package main
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/kelseyhightower/envconfig"
-	apipb "github.com/osrg/gobgp/v3/api"
-	"github.com/osrg/gobgp/v3/pkg/server"
+	apipb "github.com/osrg/gobgp/v4/api"
+	"github.com/osrg/gobgp/v4/pkg/apiutil"
+	"github.com/osrg/gobgp/v4/pkg/server"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/runityru/anycastd/announcer"
-	"github.com/runityru/anycastd/announcer/gobgpv3"
+	"github.com/runityru/anycastd/announcer/gobgpv4"
 	"github.com/runityru/anycastd/checkers"
 	"github.com/runityru/anycastd/config"
 	"github.com/runityru/anycastd/service"
@@ -54,6 +57,21 @@ func newPeer(peer config.Peer, localAddress string) *apipb.Peer {
 	}
 }
 
+// slogLevel maps a logrus level to the corresponding slog level used to
+// configure the GoBGP server logger.
+func slogLevel(lvl log.Level) slog.Level {
+	switch lvl {
+	case log.TraceLevel, log.DebugLevel:
+		return slog.LevelDebug
+	case log.InfoLevel:
+		return slog.LevelInfo
+	case log.WarnLevel:
+		return slog.LevelWarn
+	default:
+		return slog.LevelError
+	}
+}
+
 type spec struct {
 	ConfigPath string    `envconfig:"CONFIG_PATH" default:"/config.yaml"`
 	LogLevel   log.Level `envconfig:"LOG_LEVEL" default:"WARN"`
@@ -82,12 +100,12 @@ func main() {
 	g, _ := errgroup.WithContext(ctx)
 
 	log.Trace("Initializing BGP server ...")
-	bgpSrv := server.NewBgpServer(server.LoggerOption(&announcer.Logger{Logger: &log.Logger{
-		Out:       os.Stderr,
-		Formatter: lf,
-		Hooks:     make(log.LevelHooks),
-		Level:     s.LogLevel,
-	}}))
+	levelVar := new(slog.LevelVar)
+	levelVar.Set(slogLevel(s.LogLevel))
+	gobgpLogger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: levelVar,
+	}))
+	bgpSrv := server.NewBgpServer(server.LoggerOption(gobgpLogger, levelVar))
 
 	g.Go(func() error {
 		log.Trace("Starting to serve GoBGP API")
@@ -112,13 +130,13 @@ func main() {
 		}
 	}()
 
-	if err := bgpSrv.WatchEvent(context.Background(), &apipb.WatchEventRequest{
-		Peer: &apipb.WatchEventRequest_Peer{},
-	}, func(r *apipb.WatchEventResponse) {
-		if p := r.GetPeer(); p != nil && p.Type == apipb.WatchEventResponse_PeerEvent_STATE {
-			log.Info(p)
-		}
-	}); err != nil {
+	if err := bgpSrv.WatchEvent(context.Background(), server.WatchEventMessageCallbacks{
+		OnPeerUpdate: func(e *apiutil.WatchEventMessage_PeerEvent, _ time.Time) {
+			if e.Type == apiutil.PEER_EVENT_STATE {
+				log.Info(e)
+			}
+		},
+	}, server.WatchPeer()); err != nil {
 		panic(err)
 	}
 
@@ -156,7 +174,7 @@ func main() {
 		}
 
 		a := announcer.New(announcer.Config{
-			GoBGP:    gobgpv3.NewAdapter(bgpSrv),
+			GoBGP:    gobgpv4.NewAdapter(bgpSrv),
 			Prefixes: cfg.Announcer.Routes,
 			NextHop:  cfg.Announcer.LocalAddress,
 		})
