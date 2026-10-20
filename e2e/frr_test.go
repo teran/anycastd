@@ -227,7 +227,7 @@ func buildAnycastdImage(t *testing.T, ctx context.Context, cli *client.Client) s
 		Dockerfile: "Dockerfile",
 	})
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	_, _ = io.Copy(io.Discard, resp.Body) // drain until the build completes
 
 	return imageRef
